@@ -226,10 +226,10 @@ impl<'de> Deserialize<'de> for Snowflake {
 pub struct Attachment {
     pub id: Snowflake,
     pub filename: String,
-    pub content_type: String,
-    pub size: u64,
+    pub content_type: Option<String>,
+    pub size: Option<u64>,
     pub url: String,
-    pub proxy_url: String,
+    pub proxy_url: Option<String>,
     pub height: Option<u64>,
     pub width: Option<u64>,
 }
@@ -293,7 +293,7 @@ async fn fetch_attachment(
 
 #[tokio::main]
 async fn main() {
-    let max_concurrency = 64;
+    let max_concurrency = 128;
     let token = env::var("DISCORD_TOKEN").unwrap();
 
     let file_appender = tracing_appender::rolling::daily("logs", "mj-crawler.log");
@@ -334,12 +334,21 @@ async fn main() {
     let download_stream = LinesStream::new(reader.lines())
         .map(|line| {
             let line = line.unwrap();
-            let message: Message = serde_json::from_str(&line).unwrap();
-            message
+            if let Ok(message) = serde_json::from_str::<Message>(&line) {
+                return Some(message);
+            } else {
+                return None;
+            }
         })
         .filter(|message| {
-            future::ready(message.author.id.0 == 936929561302675456 && message.attachments.len() > 0)
+            let predicate = if let Some(message) = message {
+                message.author.id.0 == 936929561302675456 && message.attachments.len() > 0
+            } else {
+                false
+            };
+            return future::ready(predicate);
         })
+        .map(|message| message.unwrap())
         .map(|message| stream::iter(message.attachments))
         .flatten_unordered(None)
         .map(|attachment| {
